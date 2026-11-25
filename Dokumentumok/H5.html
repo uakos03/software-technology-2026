@@ -5,21 +5,264 @@
     <title>H5 - Objektumtervezés, implementáció és tesztelés</title>
     <link rel="stylesheet" href="../style.css">
 </head>
-<body> 
+<body>
 
     <a href="../index.html" class="vissza-link">Főoldal</a>
     <h1 class="oldal-cim">Objektumtervezés, implementáció és tesztelés</h1>
 
     <ol class="terv-lista">
-        <li>A rendszer vezérlésének kidolgozása</li>
+
+        <li>
+            A rendszer vezérlésének kidolgozása
+            <ul style="list-style: none;">
+                <li>
+                    <b>1.1 Architektúra</b>
+                    <p>
+                        A szoftver megtervezése során kiemelt figyelmet fordítottunk arra, hogy egy modern, átlátható és jól 
+                        karbantartható rendszert hozzunk létre. A rendszer az étterem hálózatán kliens-szerver felépítésben 
+                        működik. A felhasználókkal közvetlenül érintkező kliens egy Tauri-ba csomagolt React alkalmazás, míg a 
+                        háttérben egy Spring Boot alapú Java szerver dolgozik, amely egy PostgreSQL adatbázisban tárolja az adatokat. 
+                        A szerver kialakításánál a klasszikus, egyetemen is tanított háromrétegű (3-tier) architektúrát követtük. 
+                        Ez a felelősségek szétválasztásának elve alapján biztosítja, hogy a kódunk ne legyen átláthatatlan spagettikód.
+                    </p>
+                    <table class="tech-tabla">
+                        <thead><tr><th>Réteg</th><th>Felelősség</th><th>Példa osztály</th></tr></thead>
+                        <tbody>
+                            <tr><td>Controller</td><td>A legkülső réteg. Fogadja a kliens felől érkező HTTP kéréseket, ellenőrzi az alapvető bemeneti adatokat, majd továbbítja a feladatot a belső rétegeknek.</td><td>RendelesController</td></tr>
+                            <tr><td>Service</td><td>A rendszer „agya”. Itt kap helyet a tényleges üzleti logika (például a raktárkészlet kiszámolása, jogosultságok kezelése), és ez a réteg irányítja a folyamatokat.</td><td>RendelesService, KeszletService</td></tr>
+                            <tr><td>Repository</td><td>Ez a réteg felelős kizárólagosan az adatbázissal való kommunikációért. Elrejti az SQL lekérdezések bonyolultságát a Service elől.</td><td>RendelesRepository</td></tr>
+                            <tr><td>Entity</td><td>Az adatbázis tábláinak megfelelő, tisztán adatokat tároló Java osztályok, amelyeket a Repository-k mozgatnak.</td><td>Rendeles, RendelesTetel</td></tr>
+                        </tbody>
+                    </table>
+                </li>
+
+                <li>
+                    <b>1.2 Fő folyamatok vezérlése</b>
+                    <p>
+                        A fejlesztés megkezdése előtt tisztáznunk kellett, hogy a felhasználói felületről érkező kérések hogyan 
+                        haladnak végig a szerver különböző rétegein. A leggyakoribb és legkritikusabb folyamat a rendelés leadása. 
+                        Az alábbi táblázat lépésről lépésre bemutatja azt az üzenetváltást, amely egy egyszerű gombnyomás 
+                        mögött a háttérben lezajlik az objektumok között:
+                    </p>
+                    <table class="tech-tabla">
+                        <thead><tr><th>Lépés</th><th>Küldő</th><th>Művelet / Üzenet</th><th>Fogadó</th></tr></thead>
+                        <tbody>
+                            <tr><td>1</td><td>Pincér (Kliens UI)</td><td>Új rendelés adatainak elküldése (szabványos API hívás formájában)</td><td>RendelesController</td></tr>
+                            <tr><td>2</td><td>RendelesController</td><td>A rendelés feldolgozásának indítása, miután ellenőrizte az adatokat</td><td>RendelesService</td></tr>
+                            <tr><td>3</td><td>RendelesService</td><td>Megkéri a készletkezelőt, hogy ellenőrizze a termékekhez tartozó alapanyagokat</td><td>KeszletService</td></tr>
+                            <tr><td>4</td><td>KeszletService</td><td>Ha mindenből van elég alapanyag a raktárban, utasítást ad a levonásra</td><td>AlapanyagRepository</td></tr>
+                            <tr><td>5</td><td>RendelesService</td><td>A tényleges rendelés és a hozzá tartozó tételek elmentése az adatbázisba</td><td>RendelesRepository</td></tr>
+                            <tr><td>6</td><td>RendelesService</td><td>A folyamat végén a konyhai felület azonnali értesítése az új ételről</td><td>Kliens (Szakács nézet)</td></tr>
+                        </tbody>
+                    </table>
+                </li>
+
+                <li>
+                    <b>1.3 Az állapotgépek megvalósítása</b>
+                    <p>
+                        Az éttermi munkafolyamatok során a rendelések (például Nyitott, Lezárt) és a tételek (például Konyhán, Kész)
+                        különböző állapotokon mennek keresztül. Az Analízis modell szerint az állapotátmeneteket maguk az
+                        osztályok műveletei végzik (például a Rendelés_tétel sztornozas, a Kiszállításos_rendelés indulas
+                        művelete), ezért az entitásokban felsoroló típusú, úgynevezett Enum mezőket hoztunk létre, a Service
+                        osztályok pedig ezeket a műveleteket hívják. Ha például egy pincér olyan műveletet akar végezni, ami az adott
+                        állapotban logikátlan (mondjuk egy már kifizetett és lezárt rendeléshez akar új italt hozzáadni), az entitás
+                        hibát jelez, a Controller pedig a felületen egy barátságos, magyar nyelvű hibaüzenet formájában jelzi
+                        a felhasználónak. A vevő és az asztal állapotát nem tároljuk, hanem a mezőkből számoljuk.
+                    </p>
+                </li>
+            </ul>
+        </li>
+
+        <li>
+            Osztályok közötti kapcsolatok és implementációs osztályok
+            <ul style="list-style: none;">
+                <li>
+                    <b>2.1 Az analízis osztályok leképezése adatbázisra</b>
+                    <p>
+                        A tervezés korábbi szakaszaiban felrajzolt analízis modelleket és egyed-kapcsolat diagramokat a 
+                        tényleges kódolás során a Hibernate ORM (Objektum-relációs leképzés) technológia segítségével 
+                        alakítjuk át fizikai adatbázistáblákká. Ennek előnye, hogy nem kell hosszú, bonyolult SQL parancsokat 
+                        írnunk, hanem a Java objektumainkat használhatjuk.
+                    </p>
+                    <table class="tech-tabla">
+                        <thead><tr><th>Analízis osztály</th><th>Implementációs megoldás a kódban</th></tr></thead>
+                        <tbody>
+                            <tr><td>Rendelés, Helyben, Kiszállítás</td><td>Objektumorientált öröklődéssel oldjuk meg a Java kódban, az adatbázisban pedig egy extra "típus" mező dönti el az adott sorról, hogy melyik fajta rendelésről van szó.</td></tr>
+                            <tr><td>Rendelés_tétel</td><td>Egy-a-többhöz (1:N) kapcsolat a Rendelés felől. A keretrendszer automatikusan kezeli a külső kulcsokat (Foreign Key).</td></tr>
+                            <tr><td>Vevő, Telefonszám, Cím</td><td>A Vevő entitáson belül a telefonszámok és a címei egyszerű Java listaként (List) jelennek meg, amiket a háttérben külön táblákba ment a rendszer.</td></tr>
+                            <tr><td>Receptúra, Fizetett_tétel</td><td>Mivel ezek bonyolultabb, több-a-többhöz (N:M) kapcsolatok, ezeket az adatbázis elméletnek megfelelően külön kapcsolótáblaként hozzuk létre.</td></tr>
+                        </tbody>
+                    </table>
+                </li>
+
+                <li>
+                    <b>2.2 Új, a megvalósításhoz szükséges osztályok</b>
+                    <p>
+                        Az analízis fázisban még csak az üzleti fogalmakat (például Asztal, Termék, Vevő) azonosítottuk.
+                        Azonban a tényleges programozás során hamar kiderült, hogy szükségünk van olyan speciális, technikai
+                        jellegű osztályokra is, amelyek a háttérmunkát és a rendszer működtetését végzik, de a valós életben
+                        nem kézzel fogható dolgok.
+                    </p>
+                    <table class="tech-tabla">
+                        <thead><tr><th>Osztály</th><th>Felelősség</th></tr></thead>
+                        <tbody>
+                            <tr><td>FelhasznaloService</td><td>A biztonságos bejelentkezés, a PIN-kódok (hash-elt) ellenőrzése és a felhasználói jogosultságok kezelése.</td></tr>
+                            <tr><td>MuveletNaplo</td><td>A feldolgozott műveletazonosítók tárolója. Ez adja a duplikátumvédelmet: ha a kliens újraküld egy már feldolgozott műveletet, a szerver eldobja.</td></tr>
+                            <tr><td>KimenoUzenet</td><td>A kimenő e-mailek és NAV-adatok tartós sora, állapottal és újrapróbálkozással, hogy internetkimaradáskor ne vesszen el semmi.</td></tr>
+                            <tr><td>EmailKuldo</td><td>Infrastrukturális osztály, amely a napi zárás utáni jelentéseket (könyvelőnek és üzletvezetőnek), a készletriasztásokat és a beszállítói rendeléseket küldi el.</td></tr>
+                            <tr><td>NyomtatoVezerlo</td><td>Technikai osztály a fizikai blokknyomtató hálózati megszólítására a nyugta és a szállítólevél elkészítésekor.</td></tr>
+                            <tr><td>HelyiSor (Tauri)</td><td>A kliens helyi lemezes várakozási sora, amely túléli az áramszünetet és a program újraindítását.</td></tr>
+                            <tr><td>KivetelKezelo</td><td>Globális osztály a programban keletkező váratlan hibák (kivételek) elkapására és érthető magyar hibaüzenetté alakítására, hogy a program sose omoljon össze.</td></tr>
+                        </tbody>
+                    </table>
+                </li>
+            </ul>
+        </li>
+
+        <li>
+            Elemzési modellek modulokba szervezése
+            <ul style="list-style: none;">
+                <li>
+                    <b>3.1 Szerveroldali modulok</b>
+                    <p>
+                        Egy ekkora projekt esetében a kód átláthatósága és a fejlesztők közötti munkamegosztás kritikussá válik. 
+                        Ha minden fájlt egyetlen nagy mappába tennénk, a projekt kezelhetetlen lenne. Ezért a Java kódot logikai 
+                        csomagokba (package) szerveztük a funkciók alapján. Ez a moduláris felépítés lehetővé teszi, hogy ha a 
+                        későbbiekben módosítani kell például a pénzügyi részt, az ne tegye tönkre a rendelésfelvételt.
+                    </p>
+                    <ul class="pottyos-lista">
+                        <li><b>rendeles:</b> Ebben a csomagban van minden osztály, ami a rendelésekkel és asztalok kezelésével kapcsolatos.</li>
+                        <li><b>etlap:</b> A termékek, alapanyagok, receptúrák és a raktárkészlet kezeléséért felelős fájlok mappája.</li>
+                        <li><b>felhasznalo:</b> A dolgozók azonosításához és a kiszállításos vevők nyilvántartásához szükséges osztályok.</li>
+                        <li><b>penzugy:</b> A fizetési tranzakciók, nyugták generálása és a napi zárás folyamatai találhatók itt.</li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+
+        <li>
+            Implementáció (Skeleton)
+            <ul style="list-style: none;">
+                <li>
+                    <b>4.1 A prototípus (Skeleton) hatóköre</b>
+                    <p>
+                        Az egyetemi projekt keretein belül nem valósítjuk meg a teljes rendszert. A megírt váz 
+                        (skeleton) egyetlen úgynevezett hibamentes folyamatot tud végigvinni:
+                    </p>
+                    <ol>
+                        <li>A felhasználó sikeresen belép.</li>
+                        <li>Látja a szabad asztalokat, kiválaszt egyet.</li>
+                        <li>Tételeket rak a kosárba és leadja a rendelést.</li>
+                        <li>A tételek megjelennek a Konyhai (szakács) nézeten.</li>
+                    </ol>
+                    <p>
+                        A többi funkció (pl. kiszállítás, e-mail küldés, komplex statisztika) a prototípusban 
+                        csak a felület szintjén, "csonkként" (stub) jelenik meg. Ezek a gombok és menük láthatók, de a tényleges háttérlogika 
+                        még nincs hozzájuk kifejlesztve.
+                    </p>
+                </li>
+                
+                <li>
+                    <b>4.2 Példa a kódvázra (Java Spring Boot)</b>
+                    <p>
+                        Az alábbi kódrészlet a backend legfontosabb folyamatát, a rendelés leadásának 
+                        szerveroldali vázát mutatja be. Jól látható rajta a dokumentumban korábban vázolt 
+                        réteges architektúra (Controller → Service → Repository) tényleges megvalósítása:
+                    </p>
+                    <div style="background-color: #f4f4f4; padding: 15px; border: 1px solid #ccc; border-radius: 5px; overflow-x: auto; font-family: monospace; font-size: 14px; margin-bottom: 20px;">
+<pre style="margin: 0;">
+@RestController
+@RequestMapping("/api/rendelesek")
+public class RendelesController {
+
+    @Autowired
+    private RendelesService rendelesService;
+
+    <span style="color: #008000;">// Új rendelés felvétele a pultról vagy asztaltól</span>
+    @PostMapping("/leadas")
+    public ResponseEntity&lt;?&gt; rendelesLeadasa(@RequestBody RendelesDto orderDto) {
+        try {
+            rendelesService.ujRendeles(orderDto);
+            return ResponseEntity.ok().build();
+        } catch (KeszletHianyException e) {
+            <span style="color: #008000;">// Ha nincs elég alapanyag, a frontend megkapja a hibaüzenetet</span>
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+}
+
+@Service
+public class RendelesService {
+
+    @Autowired
+    private RendelesRepository rendelesRepository;
+    @Autowired
+    private KeszletService keszletService;
+    @Autowired
+    private KdsErtesito kdsErtesito;
+
+    @Transactional
+    public void ujRendeles(RendelesDto dto) throws Exception {
         
-        <li>Osztályok közötti kapcsolatok és implementációs osztályok</li>
+        <span style="color: #008000;">// 1. Készlet ellenőrzése és azonnali levonása</span>
+        keszletService.keszletLevonas(dto.getTetelek());
+
+        <span style="color: #008000;">// 2. Rendelés összeállítása és DB mentés</span>
+        Rendeles rendeles = new Rendeles();
+        rendeles.setAsztalId(dto.getAsztalId());
+        rendeles.setStatusz(RendelesStatusz.KONYHAN);
+        <span style="color: #008000;">// TODO: MapStruct vagy külön mapper osztály használata a DTO átalakításra</span>
+        rendeles.setTetelek(dto.getTetelek()); 
         
-        <li>Elemek modulokba szervezése</li>
-        
-        <li>Implementáció (Skeleton)</li>
-        
-        <li>Tesztelési terv és tesztesetek</li>
+        rendelesRepository.save(rendeles);
+
+        <span style="color: #008000;">// 3. Konyhai kijelző (KDS) frissítése WebSocketen</span>
+        kdsErtesito.ujBlokkKuldese(rendeles);
+    }
+}
+</pre>
+                    </div>
+                </li>
+            </ul>
+        </li>
+
+        <li>
+            Tesztelési terv és tesztesetek
+            <ul style="list-style: none;">
+                <li>
+                    <b>5.1 Tesztelési stratégia</b>
+                    <p>
+                        A szoftver megbízhatóságának és minőségének biztosítása érdekében többszintű tesztelési stratégiát 
+                        alkalmazunk. Nem elegendő csupán a felületet kattintgatni; a rendszer magját jelentő backend üzleti 
+                        logikát (például a végösszeg pontos kiszámítását vagy az asztalok állapotának váltását) automatizált 
+                        egységtesztekkel (JUnit) ellenőrizzük a kódban. A felhasználói felületet, a gombok működését és az 
+                        átfogó folyamatokat pedig manuális rendszertesztekkel próbáljuk ki a kliensalkalmazás futtatásával.
+                    </p>
+                </li>
+
+                <li>
+                    <b>5.2 Alapvető tesztesetek</b>
+                    <p>
+                        Az alábbi táblázat azokat a legfontosabb, kritikus teszteseteket tartalmazza, amelyeket a prototípus 
+                        bemutatása előtt mindenképpen ellenőriznünk kell. Ezek a tesztek biztosítják, hogy a rendszer a 
+                        leggyakoribb helyzetekben és a legáltalánosabb hibák esetén is a specifikációnak megfelelően viselkedjen:
+                    </p>
+                    <table class="tech-tabla">
+                        <thead><tr><th>Azonosító</th><th>Előfeltétel</th><th>Művelet / Lépés</th><th>Elvárt eredmény</th></tr></thead>
+                        <tbody>
+                            <tr><td>T-01</td><td>Pincér sikeresen belépett a rendszerbe</td><td>Termék kosárba tétele, majd a "Leadás" gomb megnyomása</td><td>A rendelés bekerül az adatbázisba, és azonnal megjelenik a konyhai nézeten.</td></tr>
+                            <tr><td>T-02</td><td>Egy adott termék alapanyaga teljesen elfogyott</td><td>A pincér megpróbálja a terméket kiválasztani a menüből</td><td>A rendszer egy figyelmeztető hibaüzenetet ad, és a tétel nem kerül bele a kosárba.</td></tr>
+                            <tr><td>T-03</td><td>A tétel sikeresen a konyhán van</td><td>A szakács rányom a "Kész" gombra a saját kijelzőjén</td><td>A tétel állapota zöldre vált, és a pincér is értesül róla a saját gépén.</td></tr>
+                            <tr><td>T-04</td><td>A rendelés "Fizetésre vár" állapotban van</td><td>A pontos összeg készpénzes rögzítése a kasszában</td><td>A rendelés véglegesen lezárul, a hozzá tartozó asztal pedig újra "szabad" lesz.</td></tr>
+                            <tr><td>T-05</td><td>Vevő adatlapja nyitva van a diszpécser előtt</td><td>Kiszállításos rendelés szándékos lemondása többször egymás után</td><td>A harmadik lemondás után a rendszer automatikusan letiltja az adott vevőt.</td></tr>
+                        </tbody>
+                    </table>
+                </li>
+            </ul>
+        </li>
+
     </ol>
 
 </body>
